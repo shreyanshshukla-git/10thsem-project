@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Arduino Oscilloscope</title>
+  <style>
+    #oscilloscope {
+      border: 1px solid black;
+      width: 800px;
+      height: 400px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Arduino Oscilloscope</h1>
+  <div>
+    <button onclick="connectToSerialPort()">Connect to Arduino</button>
+    <p id="connectionStatus">Not Connected</p>
+    <p id="sampleRate">Data Points Per Second: 0</p>
+    <label for="triggerType">Trigger:</label>
+    <select id="triggerType">
+      <option value="none">None</option>
+      <option value="rising">Rising Edge</option>
+      <option value="falling">Falling Edge</option>
+    </select>
+  </div>
+
+  <canvas id="oscilloscope"></canvas>
+  <p>Last Read Value: <span id="lastReadValue">N/A</span></p> <!-- Display last read value -->
+
+  <script>
+    let port, reader, dataBuffer = [];
+    const canvas = document.getElementById("oscilloscope");
+    const ctx = canvas.getContext("2d");
+    const lastReadValue = document.getElementById("lastReadValue");
+
+    async function connectToSerialPort() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });  // Open the serial port with the correct baud rate
+
+        document.getElementById("connectionStatus").innerText = "Connected";  // Update connection status
+        reader = port.readable.getReader();  // Create a reader for serial data
+        readSerialData();  // Start reading serial data
+      } catch (error) {
+        console.error("Failed to connect to the serial port:", error);
+        document.getElementById("connectionStatus").innerText = "Connection Failed";
+      }
+    }
+
+    async function readSerialData() {
+      const textDecoder = new TextDecoder();  // To decode serial data into text
+      let dataCount = 0;
+      const startTime = performance.now();  // To calculate the data points per second
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          reader.releaseLock();
+          break;
+        }
+
+        const lines = value.split("\n");
+        lines.forEach((line) => {
+          const trimmed = line.trim();
+          const parsed = parseInt(trimmed, 10);  // Convert to integer
+          if (!isNaN(parsed)) {
+            dataBuffer.push(parsed);  // Add to buffer
+            if (dataBuffer.length > 100) {
+              dataBuffer.shift();  // Keep buffer at a manageable size
+            }
+            lastReadValue.innerText = parsed;  // Update the last read value
+            dataCount++;  // Increment the data count
+          }
+        });
+
+        const elapsedSeconds = (performance.now() - startTime) / 1000;
+        const sampleRate = Math.round(dataCount / elapsedSeconds);
+        document.getElementById("sampleRate").innerText = `Data Points Per Second: ${sampleRate}`;
+
+        applyTrigger();  // Apply trigger logic if needed
+        plotData();  // Plot the data on the canvas
+      }
+    }
+
+    function applyTrigger() {
+      const triggerType = document.getElementById("triggerType").value;
+      if (triggerType === "none") {
+        return;  // No trigger applied
+      }
+
+      const threshold = 512;  // Middle value for ADC (0-1023 range)
+      let triggered = false;
+
+      for (let i = 1; i < dataBuffer.length; i++) {
+        const previous = dataBuffer[i - 1];
+        const current = dataBuffer[i];
+
+        if ((triggerType === "rising" && previous < threshold && current >= threshold) ||
+            (triggerType === "falling" && previous >= threshold && current < threshold)) {
+          dataBuffer = dataBuffer.slice(i);  // Start from the trigger point
+          triggered = true;
+          break;
+        }
+      }
+
+      if (!triggered) {
+        dataBuffer = [];  // Reset buffer if no trigger point is found
+      }
+    }
+
+    function plotData() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);  // Clear the canvas
+
+      const step = canvas.width / dataBuffer.length;
+      ctx.beginPath();
+      dataBuffer.forEach((value, index) => {
+        const x = index * step;
+        const y = canvas.height * (1 - value / 1023);
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+
+      ctx.strokeStyle = "blue";
+      ctx.stroke();  // Draw the plot
+    }
+  </script>
+</body>
+</html>
